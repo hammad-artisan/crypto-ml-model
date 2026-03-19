@@ -1,6 +1,8 @@
 import csv
 import datetime
 from binance.client import Client
+import talib
+from pandas import DataFrame
 
 
 class KlineProcessor:
@@ -11,6 +13,7 @@ class KlineProcessor:
         self._headers = headers
         self._klines = klines
         self._symbol = symbol
+        self._dataframe:DataFrame = None
 
     def to_dict_list(self):
         return [dict(zip(self._headers, k)) for k in self._klines]
@@ -29,9 +32,11 @@ class KlineProcessor:
 
     def to_dataframe(self):
         import pandas as pd
+        import talib
+
         df = pd.DataFrame(self._klines, columns=self._headers)
 
-        # Convert types immediately
+        # Convert types
         numeric_cols = ["Open", "High", "Low", "Close", "Volume",
                         "QuoteAssetVolume", "TakerBuyBaseVolume",
                         "TakerBuyQuoteVolume"]
@@ -40,6 +45,36 @@ class KlineProcessor:
         # Convert timestamps
         df["OpenTime"] = pd.to_datetime(df["OpenTime"], unit="ms")
         df["CloseTime"] = pd.to_datetime(df["CloseTime"], unit="ms")
+        return df
+
+    def engineer_features(self):
+        df = self.to_dataframe()
+
+        # ── Indicators ──────────────────────────────────────────
+        df["RSI"] = talib.RSI(df["Close"], timeperiod=14)
+        df["EMA50"] = talib.EMA(df["Close"], timeperiod=50)
+
+        # Drop warm-up NaN rows
+        df.dropna(subset=["RSI", "EMA50"], inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        # ── Signal Logic ────────────────────────────────────────
+        def generate_signal(row):
+            rsi = row["RSI"]
+            close = row["Close"]
+            ema50 = row["EMA50"]
+
+            uptrend = close > ema50
+            downtrend = close < ema50
+
+            if uptrend and rsi < 55:  # was 40 — too strict
+                return "BUY"
+            elif downtrend and rsi > 45:  # was 60 — too strict
+                return "SELL"
+            else:
+                return "HOLD"
+
+        df["Signal"] = df.apply(generate_signal, axis=1)
 
         return df
 
@@ -89,3 +124,9 @@ class Pipeline:
 
     def get_last_week(self) -> KlineProcessor:
         return self.get_data(7)
+
+
+
+with Pipeline("BTCUSDT","1h") as pipeline:
+    data = pipeline.get_last_5_years().engineer_features().to_csv(f"./dataset/{datetime.date.today()}.csv")
+    print(data)
