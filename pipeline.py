@@ -89,8 +89,3 @@ class Pipeline:
 
     def get_last_week(self) -> KlineProcessor:
         return self.get_data(7)
-
-
-with Pipeline("BTCUSDT","1h") as pipeline:
-    file_path = f"./dataset/{datetime.date.today()}.csv"
-    print(pipeline.get_last_5_years().to_csv(file_path))
